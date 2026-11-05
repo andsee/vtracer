@@ -54,21 +54,34 @@ pub struct SimplifyCurves {
 impl CurvePass for SimplifyCurves {
     fn open(&self, geom: FittedGeom) -> FittedGeom {
         match geom {
-            FittedGeom::Beziers(chain) => FittedGeom::Beziers(self.simplify_chain(chain, false)),
+            FittedGeom::Beziers(chain) => FittedGeom::Beziers(self.simplify_chain(chain, false, None)),
+            FittedGeom::SupportedBeziers { chain, corners } => FittedGeom::SupportedBeziers {
+                chain: self.simplify_chain(chain, false, Some(&corners)),
+                corners,
+            },
             other => other,
         }
     }
 
     fn ring(&self, geom: FittedGeom) -> FittedGeom {
         match geom {
-            FittedGeom::Beziers(chain) => FittedGeom::Beziers(self.simplify_chain(chain, true)),
+            FittedGeom::Beziers(chain) => FittedGeom::Beziers(self.simplify_chain(chain, true, None)),
+            FittedGeom::SupportedBeziers { chain, corners } => FittedGeom::SupportedBeziers {
+                chain: self.simplify_chain(chain, true, Some(&corners)),
+                corners,
+            },
             other => other,
         }
     }
 }
 
 impl SimplifyCurves {
-    fn simplify_chain(&self, mut chain: Vec<[PointF64; 4]>, closed: bool) -> Vec<[PointF64; 4]> {
+    fn simplify_chain(
+        &self,
+        mut chain: Vec<[PointF64; 4]>,
+        closed: bool,
+        corners: Option<&[PointF64]>,
+    ) -> Vec<[PointF64; 4]> {
         if self.tolerance <= 0.0 || chain.len() < 2 {
             return chain;
         }
@@ -84,19 +97,33 @@ impl SimplifyCurves {
                     break_angle(&chain[prev], &chain[k])
                 })
                 .collect();
-            let seam = angles
+            let seam = if let Some(corners) = corners {
+                // The source policy is authoritative, including at the seam.
+                // Without a protected corner use the smoothest junction, not
+                // a residual tangent break at a rejected wobble.
+                chain.iter().position(|c| corners.contains(&c[0])).unwrap_or_else(|| {
+                    angles.iter().enumerate()
+                        .min_by(|a, b| a.1.total_cmp(b.1))
+                        .map(|(i, _)| i).unwrap_or(0)
+                })
+            } else {
+                angles
                 .iter()
                 .enumerate()
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(i, _)| i)
-                .unwrap_or(0);
+                .unwrap_or(0)
+            };
             chain.rotate_left(seam);
         }
 
         // Cut into smooth runs at corner anchors (chain ends are always cuts).
         let mut cuts: Vec<usize> = vec![0];
         for i in 1..chain.len() {
-            if break_angle(&chain[i - 1], &chain[i]) >= self.corner_threshold {
+            if corners.map_or_else(
+                || break_angle(&chain[i - 1], &chain[i]) >= self.corner_threshold,
+                |corners| corners.contains(&chain[i][0]),
+            ) {
                 cuts.push(i);
             }
         }

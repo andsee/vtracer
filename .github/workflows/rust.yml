@@ -55,3 +55,20 @@ jobs:
         run: |
           wasm-pack build --target nodejs --out-dir pkg
           node test.js
+
+  browser:
+    name: Browser WASM artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build browser package
+        working-directory: nodejs
+        run: wasm-pack build --target web --out-dir pkg-web
+      - name: Upload browser package
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: vtracer-browser-wasm
+          path: nodejs/pkg-web/
+          if-no-files-found: error

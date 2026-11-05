@@ -109,7 +109,7 @@ fn emit_segment(geom: &FittedGeom, forward: bool, first: bool, sub: &mut SubPath
                 sub.commands.push(PathCmd::LineTo(*p));
             }
         }
-        FittedGeom::Beziers(curves) => {
+        FittedGeom::Beziers(curves) | FittedGeom::SupportedBeziers { chain: curves, .. } => {
             if curves.is_empty() {
                 return;
             }

@@ -23,6 +23,7 @@ struct Options {
     color_precision: Option<i32>,
     layer_difference: Option<i32>,
     corner_threshold: Option<i32>,
+    corner_support: Option<f64>,
     length_threshold: Option<f64>,
     max_iterations: Option<usize>,
     splice_threshold: Option<i32>,
@@ -97,6 +98,9 @@ fn config_from(options: JsValue) -> Result<Config, JsValue> {
     }
     if let Some(v) = opts.corner_threshold {
         config.corner_threshold = v;
+    }
+    if let Some(v) = opts.corner_support {
+        config.corner_support = v;
     }
     if let Some(v) = opts.length_threshold {
         config.length_threshold = v;

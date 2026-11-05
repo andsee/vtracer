@@ -101,6 +101,7 @@ Options:
   -f, --filter-speckle <FILTER_SPECKLE>      Discard patches smaller than X px in size (0..=128)
   -p, --color-precision <COLOR_PRECISION>    Significant bits per RGB channel (1..=8)
   -g, --gradient-step <GRADIENT_STEP>        Color difference between gradient layers (0..=255)
+      --corner-support <PIXELS>             Spline-only source-contour arc length support (0 = exact legacy)
       --simplify <TOLERANCE>                 Simplify curves: fewest cubics within this tolerance in px (try 1–2.5)
       --path-precision <PATH_PRECISION>      Decimal places to use in path coordinates
       --palette <PALETTE>                    Fixed palette: comma-separated hex colors, e.g. '#112233,#445566'
@@ -121,6 +122,18 @@ The spline fine-tuning flags `--corner-threshold <0..=180>`,
 accepted but hidden from `--help`: their defaults (60 / 4 / 45) serve
 virtually every conversion, and `--simplify` is the knob that actually moves
 output size and smoothness.
+
+`--corner-support <pixels>` (JavaScript: `cornerSupport`) sets finite,
+nonnegative size support measured along the source contour's arc length for
+spline corner detection. This is not a minimum adjacent edge length. The default
+`0` preserves exact legacy behavior; positive values suppress corners without
+enough contour support. Pixel and polygon modes are unaffected. This is a
+curve-fitting option, not raster or SVG postprocessing.
+
+Support probes extend in both directions along the contour, capped at open
+endpoints or the next same-direction corner to preserve small whole contours and
+short deliberate turns. Positive support cannot semantically distinguish every
+deliberate zigzag from raster wobble.
 
 ### New in 1.0
 

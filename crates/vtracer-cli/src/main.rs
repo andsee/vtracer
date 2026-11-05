@@ -66,6 +66,10 @@ struct Args {
     #[arg(long, hide = true, value_parser = clap::value_parser!(i64).range(0..=180))]
     corner_threshold: Option<i64>,
 
+    /// Spline-only corner size support along source-contour arc length in px (0 = exact legacy).
+    #[arg(long, value_name = "PIXELS", value_parser = parse_corner_support)]
+    corner_support: Option<f64>,
+
     /// Subdivide until all segments are shorter than this length (3.5..=10).
     ///
     /// Hidden from help: with `--simplify` reducing anchors by an explicit
@@ -141,6 +145,14 @@ fn parse_segment_length(s: &str) -> Result<f64, String> {
     Ok(v)
 }
 
+fn parse_corner_support(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
+    if !v.is_finite() || v < 0.0 {
+        return Err(format!("corner support {v} must be finite and nonnegative"));
+    }
+    Ok(v)
+}
+
 /// Parse a comma/whitespace/newline separated list of `#rrggbb` colors.
 fn parse_palette(text: &str) -> Result<Vec<Color>, String> {
     let mut colors = Vec::new();
@@ -191,6 +203,9 @@ fn build_config(args: &Args) -> Result<Config, String> {
     }
     if let Some(v) = args.corner_threshold {
         config.corner_threshold = v as i32;
+    }
+    if let Some(v) = args.corner_support {
+        config.corner_support = v;
     }
     if let Some(v) = args.segment_length {
         config.length_threshold = v;
@@ -286,6 +301,47 @@ fn main() -> ExitCode {
         Err(msg) => {
             eprintln!("Conversion failed: {msg}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corner_support_defaults_to_legacy() {
+        let args = Args::try_parse_from(["vtracer", "in.png", "out.svg"]).unwrap();
+        assert_eq!(args.corner_support, None);
+        assert_eq!(build_config(&args).unwrap().corner_support, 0.0);
+    }
+
+    #[test]
+    fn corner_support_accepts_zero_and_positive_values() {
+        for value in ["0", "0.5", "8", "1e2"] {
+            let args =
+                Args::try_parse_from(["vtracer", "in.png", "out.svg", "--corner-support", value])
+                    .unwrap();
+            let expected: f64 = value.parse().unwrap();
+            assert_eq!(args.corner_support, Some(expected));
+            assert_eq!(build_config(&args).unwrap().corner_support, expected);
+        }
+    }
+
+    #[test]
+    fn corner_support_rejects_negative_nonfinite_and_nonnumeric_values() {
+        for value in ["-1", "NaN", "inf", "Infinity", "-inf", "1e999", "nope"] {
+            assert!(parse_corner_support(value).is_err(), "{value}");
+            assert!(
+                Args::try_parse_from([
+                    "vtracer",
+                    "in.png",
+                    "out.svg",
+                    &format!("--corner-support={value}"),
+                ])
+                .is_err(),
+                "{value}"
+            );
         }
     }
 }

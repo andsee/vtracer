@@ -102,6 +102,11 @@ pub struct Config {
     pub mode: FitMode,
     /// Corner threshold in degrees.
     pub corner_threshold: i32,
+    /// Minimum corner support in input pixels (finite, nonnegative).
+    /// Zero keeps the legacy angle-only spline pipeline exactly. See
+    /// [`FitParams::corner_support`] for the support measurement.
+    /// Ignored in pixel and polygon modes.
+    pub corner_support: f64,
     /// Segment length threshold in pixels.
     pub length_threshold: f64,
     /// Maximum least-squares refinement iterations per spline segment.
@@ -147,6 +152,7 @@ impl Default for Config {
             layer_difference: 16,
             mode: FitMode::Spline,
             corner_threshold: 60,
+            corner_support: 0.0,
             length_threshold: 4.0,
             max_iterations: 10,
             splice_threshold: 45,
@@ -190,6 +196,7 @@ impl Config {
     fn fit_params(&self) -> FitParams {
         FitParams {
             corner_threshold: deg2rad(self.corner_threshold),
+            corner_support: self.corner_support,
             length_threshold: self.length_threshold,
             max_iterations: self.max_iterations,
             splice_threshold: deg2rad(self.splice_threshold),
@@ -257,6 +264,7 @@ impl Config {
             FitMode::Polygon => Box::new(PolygonSegmentFitter::default()),
             FitMode::Spline => Box::new(SplineSegmentFitter {
                 corner_threshold: deg2rad(self.corner_threshold),
+                corner_support: self.corner_support,
                 length_threshold: self.length_threshold,
                 max_iterations: self.max_iterations,
                 splice_threshold: deg2rad(self.splice_threshold),
@@ -328,6 +336,11 @@ impl Config {
 
     /// Assemble a concrete pipeline from this configuration.
     pub fn build(&self) -> Result<Pipeline, Error> {
+        if !self.corner_support.is_finite() || self.corner_support < 0.0 {
+            return Err(Error::Other(
+                "corner support must be finite and nonnegative".into(),
+            ));
+        }
         let compositing = match self.hierarchical {
             Hierarchical::Stacked => Compositing::Stacked(self.fitter()),
             Hierarchical::Cutout => Compositing::Mosaic {

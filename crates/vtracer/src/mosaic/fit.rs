@@ -97,6 +97,8 @@ impl SegmentFitter for PolygonSegmentFitter {
 pub struct SplineSegmentFitter {
     /// Corner angle threshold, radians.
     pub corner_threshold: f64,
+    /// Minimum source-contour corner support in input pixels; zero is legacy.
+    pub corner_support: f64,
     /// Subdivide until segments are shorter than this (px).
     pub length_threshold: f64,
     pub max_iterations: usize,
@@ -108,6 +110,7 @@ impl Default for SplineSegmentFitter {
     fn default() -> Self {
         Self {
             corner_threshold: std::f64::consts::PI / 3.0,
+            corner_support: 0.0,
             length_threshold: 4.0,
             max_iterations: 10,
             splice_threshold: std::f64::consts::PI / 4.0,
@@ -175,6 +178,9 @@ impl SegmentFitter for SplineSegmentFitter {
         //    centered and cannot cross a non-adjacent segment (which would
         //    open a gap in the tessellation). Endpoints are preserved.
         let simplified = PathSimplify::limit_penalties(&PathI32::from_points(seg.points.clone()));
+        if self.corner_support > 0.0 {
+            return self.fit_supported(simplified, false);
+        }
         if simplified.len() <= 2 {
             return FittedSegment {
                 geom: FittedGeom::Polyline(simplified.path.iter().copied().map(pt).collect()),
@@ -238,6 +244,9 @@ impl SegmentFitter for SplineSegmentFitter {
             };
         }
         let simplified = PathSimplify::limit_penalties(&PathI32::from_points(seg.points.clone()));
+        if self.corner_support > 0.0 {
+            return self.fit_supported(simplified, true);
+        }
         let smoothed = simplified.smooth(
             self.corner_threshold,
             OUTSET_RATIO,
@@ -251,8 +260,28 @@ impl SegmentFitter for SplineSegmentFitter {
                 geom: FittedGeom::Polyline(to_f64(&seg.points)),
             };
         }
+
         FittedSegment {
             geom: FittedGeom::Beziers(beziers),
+        }
+    }
+
+}
+
+impl SplineSegmentFitter {
+    fn fit_supported(&self, path: PathI32, closed: bool) -> FittedSegment {
+        FittedSegment {
+            geom: crate::corner::fit_supported(
+                path.to_path_f64(),
+                crate::fitter::FitParams {
+                    corner_threshold: self.corner_threshold,
+                    corner_support: self.corner_support,
+                    length_threshold: self.length_threshold,
+                    max_iterations: self.max_iterations,
+                    splice_threshold: self.splice_threshold,
+                },
+                closed,
+            ),
         }
     }
 }

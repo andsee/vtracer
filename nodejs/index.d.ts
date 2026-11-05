@@ -10,6 +10,8 @@ export interface Options {
   colorPrecision?: number;
   layerDifference?: number;
   cornerThreshold?: number;
+  /** Spline-only corner support along source-contour arc length in px; finite >= 0 (default 0 = exact legacy). */
+  cornerSupport?: number;
   lengthThreshold?: number;
   maxIterations?: number;
   spliceThreshold?: number;

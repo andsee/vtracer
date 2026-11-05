@@ -71,12 +71,24 @@ const svg2 = vtracer.convertPixels(rgba, width, height, { clustering: 'bw' });
 `preset` (`"bw" | "poster" | "photo"`, applied first), `clustering`
 (`"color-cluster" | "bw" | "watershed"`), `hierarchical` (`"stacked" | "cutout"`
 for the seam-free mosaic), `mode` (`"pixel" | "polygon" | "spline"`),
-`filterSpeckle`, `colorPrecision`, `layerDifference`, `cornerThreshold`,
+`filterSpeckle`, `colorPrecision`, `layerDifference`, `cornerThreshold`, `cornerSupport`,
 `lengthThreshold`, `maxIterations`, `spliceThreshold`, `simplify` (curve
 simplification tolerance in px, try 1–2.5), `pathPrecision`, `palette` (list of
 `#rrggbb`), `maxColors`, `optimize` (`0 | 1 | 2`), `binaryThreshold` /
 `adaptive` / `adaptiveWindow` / `adaptiveT` (binary mode), `watershedDetail`
 (default 128; higher = more regions, uncapped).
+
+`cornerSupport` is a finite, nonnegative size support in pixels measured along
+the source contour's arc length, used only in `spline` mode. It is not a minimum
+adjacent edge length. Omit it or use `0` for exact legacy behavior; positive
+values suppress corners without enough contour support. Pixel and polygon modes
+are unaffected. This operates during curve fitting, not as raster or SVG
+postprocessing.
+
+Support probes extend in both directions along the contour, capped at open
+endpoints or the next same-direction corner. This preserves small whole contours
+and short deliberate turns, but positive support cannot semantically distinguish
+every deliberate zigzag from raster wobble.
 
 ## Build from source
 

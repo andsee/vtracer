@@ -46,6 +46,48 @@ svg = vtracer.convertPixels(rgba, w, h);
 assert(svg.includes('<svg'), 'convertPixels');
 console.log('convertPixels:', (svg.match(/<path/g) || []).length, 'paths');
 
+// Corner support is opt-in and only affects spline fitting.
+for (const hierarchical of ['stacked', 'cutout']) {
+  const options = { hierarchical, mode: 'spline', filterSpeckle: 0 };
+  assert.strictEqual(
+    vtracer.convertBuffer(data, options),
+    vtracer.convertBuffer(data, { ...options, cornerSupport: 0 }),
+    `${hierarchical}: omitted/zero cornerSupport preserves encoded conversion`
+  );
+  assert.strictEqual(
+    vtracer.convertPixels(rgba, w, h, options),
+    vtracer.convertPixels(rgba, w, h, { ...options, cornerSupport: 0 }),
+    `${hierarchical}: omitted/zero cornerSupport preserves pixel conversion`
+  );
+  for (const convert of [
+    opts => vtracer.convertBuffer(data, opts),
+    opts => vtracer.convertPixels(rgba, w, h, opts),
+  ]) {
+    const supported = convert({ ...options, cornerSupport: 3 });
+    assert(supported.includes('<svg') && supported.includes('<path'), `${hierarchical}: supported spline conversion`);
+    for (const mode of ['pixel', 'polygon']) {
+      assert.strictEqual(
+        convert({ ...options, mode }),
+        convert({ ...options, mode, cornerSupport: 3 }),
+        `${hierarchical}/${mode}: cornerSupport has no effect`
+      );
+    }
+  }
+}
+for (const cornerSupport of [NaN, Infinity, -Infinity, -1]) {
+  assert.throws(
+    () => vtracer.convertBuffer(data, { cornerSupport }),
+    /corner.?support.*finite|corner.?support.*nonnegative/i,
+    `convertBuffer rejects cornerSupport=${cornerSupport}`
+  );
+  assert.throws(
+    () => vtracer.convertPixels(rgba, w, h, { cornerSupport }),
+    /corner.?support.*finite|corner.?support.*nonnegative/i,
+    `convertPixels rejects cornerSupport=${cornerSupport}`
+  );
+}
+console.log('cornerSupport parity, validation, and stacked/cutout conversions OK');
+
 // file I/O
 const out = path.join(require('os').tmpdir(), 'vtracer_node_out.svg');
 vtracer.convertFileSync(SAMPLE, out, { mode: 'spline' });

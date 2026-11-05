@@ -28,6 +28,12 @@ pub enum FittedGeom {
     Polyline(Vec<PointF64>),
     /// Chain of cubic Béziers; consecutive curves share endpoints (spline backend).
     Beziers(Vec<[PointF64; 4]>),
+    /// Size-aware spline, with the authoritative source-contour corner set.
+    /// Geometry passes must not infer additional protected corners.
+    SupportedBeziers {
+        chain: Vec<[PointF64; 4]>,
+        corners: Vec<PointF64>,
+    },
 }
 
 impl FittedGeom {
@@ -35,7 +41,9 @@ impl FittedGeom {
     pub fn into_closed_subpath(self) -> SubPath {
         match self {
             FittedGeom::Polyline(points) => polyline_subpath(&points),
-            FittedGeom::Beziers(chain) => beziers_subpath(&chain),
+            FittedGeom::Beziers(chain) | FittedGeom::SupportedBeziers { chain, .. } => {
+                beziers_subpath(&chain)
+            }
         }
     }
 }
@@ -46,6 +54,15 @@ impl FittedGeom {
 pub struct FitParams {
     /// Minimum momentary angle (radians) to be considered a corner.
     pub corner_threshold: f64,
+    /// Arc-length support on each side of a source-contour corner, in input
+    /// pixels. Zero disables the filter. With support enabled, the turn must
+    /// persist between probes this far away. Probes stop at open endpoints or
+    /// the next same-direction corner, preserving short deliberate turns and
+    /// small whole rings rather than rejecting them by adjacent edge length.
+    /// Opposing turns inside the support window can cancel a raster wobble.
+    /// Rings shorter than two support windows keep their angle-only corners,
+    /// rather than using the whole small contour as evidence of noise.
+    pub corner_support: f64,
     /// Subdivide until all segments are shorter than this length (px).
     pub length_threshold: f64,
     /// Maximum smoothing iterations.
@@ -58,6 +75,7 @@ impl Default for FitParams {
     fn default() -> Self {
         Self {
             corner_threshold: std::f64::consts::PI / 3.0, // 60°
+            corner_support: 0.0,
             length_threshold: 4.0,
             max_iterations: 10,
             splice_threshold: std::f64::consts::PI / 4.0, // 45°
@@ -122,6 +140,20 @@ fn trace_region(mask: &RegionMask, mode: PathSimplifyMode, params: FitParams) ->
             x: mask.offset.x + sub.rect.left,
             y: mask.offset.y + sub.rect.top,
         };
+        if matches!(mode, PathSimplifyMode::Spline) && params.corner_support > 0.0 {
+            for mut path in BinaryCluster::image_to_paths(
+                &sub.to_binary_image(),
+                PathSimplifyMode::Polygon,
+            ) {
+                path.offset(&offset);
+                geoms.push(crate::corner::fit_supported(
+                    path.to_path_f64(),
+                    params,
+                    true,
+                ));
+            }
+            continue;
+        }
         let compound = BinaryCluster::image_to_compound_path(
             &offset,
             &sub.to_binary_image(),
