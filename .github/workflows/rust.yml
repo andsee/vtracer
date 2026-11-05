@@ -59,6 +59,8 @@ jobs:
   browser:
     name: Browser WASM artifact
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Install wasm-pack
