@@ -12,6 +12,7 @@
 
 use flo_curves::bezier::{fit_curve_cubic, Curve};
 use flo_curves::Coord2;
+use std::collections::HashSet;
 use visioncortex::PointF64;
 
 use crate::fitter::FittedGeom;
@@ -55,6 +56,12 @@ impl CurvePass for SimplifyCurves {
     fn open(&self, geom: FittedGeom) -> FittedGeom {
         match geom {
             FittedGeom::Beziers(chain) => FittedGeom::Beziers(self.simplify_chain(chain, false)),
+            FittedGeom::SupportedBeziers { chain, corners } => {
+                FittedGeom::SupportedBeziers {
+                    chain: self.simplify_supported_chain(chain, false, &corners),
+                    corners,
+                }
+            }
             other => other,
         }
     }
@@ -62,12 +69,72 @@ impl CurvePass for SimplifyCurves {
     fn ring(&self, geom: FittedGeom) -> FittedGeom {
         match geom {
             FittedGeom::Beziers(chain) => FittedGeom::Beziers(self.simplify_chain(chain, true)),
+            FittedGeom::SupportedBeziers { chain, corners } => {
+                FittedGeom::SupportedBeziers {
+                    chain: self.simplify_supported_chain(chain, true, &corners),
+                    corners,
+                }
+            }
             other => other,
         }
     }
 }
 
 impl SimplifyCurves {
+    fn simplify_supported_chain(
+        &self,
+        mut chain: Vec<[PointF64; 4]>,
+        closed: bool,
+        corners: &[PointF64],
+    ) -> Vec<[PointF64; 4]> {
+        if self.tolerance <= 0.0 || chain.len() < 2 {
+            return chain;
+        }
+        let key = |p: PointF64| {
+            (
+                if p.x == 0.0 { 0.0 } else { p.x }.to_bits(),
+                if p.y == 0.0 { 0.0 } else { p.y }.to_bits(),
+            )
+        };
+        let protected: HashSet<_> = corners.iter().copied().map(key).collect();
+        if closed {
+            let seam = chain
+                .iter()
+                .position(|c| protected.contains(&key(c[0])))
+                .unwrap_or_else(|| {
+                    (0..chain.len())
+                        .min_by(|&a, &b| {
+                            let prev_a = if a == 0 { chain.len() - 1 } else { a - 1 };
+                            let prev_b = if b == 0 { chain.len() - 1 } else { b - 1 };
+                            break_angle(&chain[prev_a], &chain[a])
+                                .total_cmp(&break_angle(&chain[prev_b], &chain[b]))
+                        })
+                        .unwrap_or(0)
+                });
+            chain.rotate_left(seam);
+        }
+        let mut cuts = vec![0];
+        for i in 1..chain.len() {
+            if protected.contains(&key(chain[i][0])) {
+                cuts.push(i);
+            }
+        }
+        cuts.push(chain.len());
+        let mut out = Vec::with_capacity(chain.len());
+        for window in cuts.windows(2) {
+            let run = &chain[window[0]..window[1]];
+            if run.len() < 2 {
+                out.extend_from_slice(run);
+            } else {
+                match refit_run(run, self.tolerance) {
+                    Some(refit) if refit.len() < run.len() => out.extend(refit),
+                    _ => out.extend_from_slice(run),
+                }
+            }
+        }
+        out
+    }
+
     fn simplify_chain(&self, mut chain: Vec<[PointF64; 4]>, closed: bool) -> Vec<[PointF64; 4]> {
         if self.tolerance <= 0.0 || chain.len() < 2 {
             return chain;
@@ -378,6 +445,25 @@ mod tests {
         match pass().ring(FittedGeom::Polyline(poly.clone())) {
             FittedGeom::Polyline(p) => assert_eq!(p, poly),
             _ => panic!("polyline must stay a polyline"),
+        }
+    }
+
+    #[test]
+    fn dense_retained_corner_membership_stays_indexed() {
+        let chain = straight_chain(pt(0.0, 0.0), pt(8192.0, 0.0), 8192);
+        let corners = anchors(&chain);
+        match pass().open(FittedGeom::SupportedBeziers {
+            chain: chain.clone(),
+            corners: corners.clone(),
+        }) {
+            FittedGeom::SupportedBeziers {
+                chain: result,
+                corners: kept,
+            } => {
+                assert_eq!(result, chain);
+                assert_eq!(kept, corners);
+            }
+            _ => panic!("supported geometry must retain its metadata"),
         }
     }
 }

@@ -23,6 +23,7 @@ struct Options {
     color_precision: Option<i32>,
     layer_difference: Option<i32>,
     corner_threshold: Option<i32>,
+    corner_support: Option<f64>,
     length_threshold: Option<f64>,
     max_iterations: Option<usize>,
     splice_threshold: Option<i32>,
@@ -57,7 +58,8 @@ fn parse_hex(token: &str) -> Result<Color, JsValue> {
         return Err(err(format!("`{token}` is not a #rrggbb color")));
     }
     let b = |r: std::ops::Range<usize>| {
-        u8::from_str_radix(&hex[r], 16).map_err(|_| err(format!("`{token}` is not a #rrggbb color")))
+        u8::from_str_radix(&hex[r], 16)
+            .map_err(|_| err(format!("`{token}` is not a #rrggbb color")))
     };
     Ok(Color::new(b(0..2)?, b(2..4)?, b(4..6)?))
 }
@@ -98,6 +100,9 @@ fn config_from(options: JsValue) -> Result<Config, JsValue> {
     if let Some(v) = opts.corner_threshold {
         config.corner_threshold = v;
     }
+    if let Some(v) = opts.corner_support {
+        config.corner_support = v;
+    }
     if let Some(v) = opts.length_threshold {
         config.length_threshold = v;
     }
@@ -114,7 +119,10 @@ fn config_from(options: JsValue) -> Result<Config, JsValue> {
         config.path_precision = Some(v);
     }
     if let Some(list) = opts.palette {
-        config.palette = list.iter().map(|s| parse_hex(s)).collect::<Result<_, _>>()?;
+        config.palette = list
+            .iter()
+            .map(|s| parse_hex(s))
+            .collect::<Result<_, _>>()?;
     }
     if let Some(v) = opts.max_colors {
         config.max_colors = Some(v);

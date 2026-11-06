@@ -10,6 +10,8 @@ export interface Options {
   colorPrecision?: number;
   layerDifference?: number;
   cornerThreshold?: number;
+  /** Minimum source-contour spline corner support in pixels (0 = legacy). */
+  cornerSupport?: number;
   lengthThreshold?: number;
   maxIterations?: number;
   spliceThreshold?: number;

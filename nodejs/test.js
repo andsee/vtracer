@@ -11,6 +11,10 @@ const data = fs.readFileSync(SAMPLE);
 let svg = vtracer.convertBuffer(data);
 assert(svg.includes('<svg') && svg.includes('<path'), 'default convertBuffer');
 console.log('convertBuffer default:', (svg.match(/<path/g) || []).length, 'paths');
+const legacySvg = vtracer.convertBuffer(data, { cornerSupport: 0 });
+assert.strictEqual(legacySvg, svg, 'zero cornerSupport preserves legacy output');
+svg = vtracer.convertBuffer(data, { cornerSupport: 4 });
+assert(svg.includes('<svg'), 'positive cornerSupport');
 
 // options: bw clustering -> all black
 svg = vtracer.convertBuffer(data, { clustering: 'bw' });

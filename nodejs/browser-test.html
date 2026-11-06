@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>VTracer browser binding test</title>
+<pre id="result">BROWSER_BINDING_PENDING</pre>
+<script type="module">
+  import init, { vectorize_rgba } from './pkg-web/vtracer_wasm.js';
+
+  const result = document.querySelector('#result');
+  try {
+    await init();
+    const width = 24;
+    const height = 24;
+    const pixels = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        const inside = x >= 4 && x < 20 && y >= 4 && y < 20;
+        pixels.set(inside ? [0, 0, 0, 255] : [255, 255, 255, 255], i);
+      }
+    }
+    const svg = vectorize_rgba(pixels, width, height, {
+      clustering: 'bw',
+      filterSpeckle: 0,
+      cornerSupport: 4,
+    });
+    if (!svg.includes('<svg') || !svg.includes('<path')) {
+      throw new Error('browser binding returned invalid SVG');
+    }
+    result.textContent = `BROWSER_BINDING_OK ${svg.length} bytes`;
+  } catch (error) {
+    result.textContent = `BROWSER_BINDING_FAILED ${error}`;
+    throw error;
+  }
+</script>

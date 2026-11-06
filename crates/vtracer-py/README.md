@@ -78,6 +78,7 @@ properties, plus the presets `Config.bw()`, `Config.poster()`, `Config.photo()`:
 | `color_precision` | `6` | significant bits per channel |
 | `layer_difference` | `16` | color diff between gradient layers |
 | `corner_threshold` | `60` | degrees |
+| `corner_support` | `0.0` | spline corner support in input pixels; zero preserves legacy behavior |
 | `length_threshold` | `4.0` | px |
 | `max_iterations` | `10` | |
 | `splice_threshold` | `45` | degrees |
@@ -91,6 +92,9 @@ properties, plus the presets `Config.bw()`, `Config.poster()`, `Config.photo()`:
 | `adaptive_window` | `0` | bw adaptive: window px (`0` = auto) |
 | `adaptive_t` | `15.0` | bw adaptive: % below local mean |
 | `watershed_detail` | `128` | watershed: hierarchy cut level (higher = more regions, uncapped) |
+
+`corner_support` is appended after the existing constructor arguments, so
+previous positional calls continue to map to the same options.
 
 Each `Config` has `convert_file(input, output)`, `convert_bytes(data, format=None) -> str`,
 and `convert_pixels(rgba, width, height) -> str`.

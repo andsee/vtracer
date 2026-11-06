@@ -72,6 +72,8 @@ const svg2 = vtracer.convertPixels(rgba, width, height, { clustering: 'bw' });
 (`"color-cluster" | "bw" | "watershed"`), `hierarchical` (`"stacked" | "cutout"`
 for the seam-free mosaic), `mode` (`"pixel" | "polygon" | "spline"`),
 `filterSpeckle`, `colorPrecision`, `layerDifference`, `cornerThreshold`,
+`cornerSupport` (minimum spline-corner support along the source contour in px;
+default `0` preserves legacy behavior),
 `lengthThreshold`, `maxIterations`, `spliceThreshold`, `simplify` (curve
 simplification tolerance in px, try 1–2.5), `pathPrecision`, `palette` (list of
 `#rrggbb`), `maxColors`, `optimize` (`0 | 1 | 2`), `binaryThreshold` /

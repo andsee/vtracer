@@ -472,7 +472,7 @@ mod tests {
                 PointF64 { x: p.x as f64, y: p.y as f64 }
             };
             match fitted.geom {
-                FittedGeom::Beziers(b) => {
+                FittedGeom::Beziers(b) | FittedGeom::SupportedBeziers { chain: b, .. } => {
                     assert_eq!(b.first().unwrap()[0], start, "start pinned to node");
                     assert_eq!(b.last().unwrap()[3], end, "end pinned to node");
                 }
@@ -515,7 +515,7 @@ mod tests {
                 PointF64 { x: p.x as f64, y: p.y as f64 }
             };
             match pass.open(fitter.fit_open(seg).geom) {
-                FittedGeom::Beziers(b) => {
+                FittedGeom::Beziers(b) | FittedGeom::SupportedBeziers { chain: b, .. } => {
                     assert_eq!(b.first().unwrap()[0], start, "start pinned through pass");
                     assert_eq!(b.last().unwrap()[3], end, "end pinned through pass");
                 }
