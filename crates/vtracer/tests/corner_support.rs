@@ -17,6 +17,30 @@ fn binary_image(width: usize, height: usize, black: impl Fn(usize, usize) -> boo
     }
 }
 
+fn concave_junction_image() -> ColorImage {
+    let polygon = [
+        (4.0, 4.0),
+        (60.0, 4.0),
+        (60.0, 55.0),
+        (50.0, 55.0),
+        (29.0, 43.0),
+        (5.0, 55.0),
+        (4.0, 55.0),
+    ];
+    binary_image(64, 64, |x, y| {
+        let (x, y) = (x as f64 + 0.5, y as f64 + 0.5);
+        let mut inside = false;
+        for i in 0..polygon.len() {
+            let (x0, y0) = polygon[i];
+            let (x1, y1) = polygon[(i + 1) % polygon.len()];
+            if (y0 > y) != (y1 > y) && x < (x1 - x0) * (y - y0) / (y1 - y0) + x0 {
+                inside = !inside;
+            }
+        }
+        inside
+    })
+}
+
 fn snowman_bow() -> ColorImage {
     let text = include_str!("fixtures/snowman-bow.pbm");
     let tokens: Vec<_> = text
@@ -215,6 +239,26 @@ fn snowman_bow_wobble_is_removed_by_the_full_raster_to_svg_pipeline() {
             && !fitted_render[4 * width + 16],
         "the raised hat-edge wobble is removed by size-aware protection"
     );
+}
+
+#[test]
+fn subthreshold_concave_junction_keeps_legacy_spline_geometry() {
+    let image = concave_junction_image();
+    let legacy = config(Hierarchical::Stacked).build().unwrap().to_svg(&image).unwrap();
+    for corner_support in [0.000001, 1.0, 4.0] {
+        let supported = Config {
+            corner_support,
+            ..config(Hierarchical::Stacked)
+        }
+        .build()
+        .unwrap()
+        .to_svg(&image)
+        .unwrap();
+        assert_eq!(
+            supported, legacy,
+            "non-candidate concave transitions must use baseline spline fitting"
+        );
+    }
 }
 
 #[test]

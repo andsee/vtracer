@@ -148,6 +148,14 @@ fn classify(path: &PathF64, params: FitParams, closed: bool) -> (Vec<bool>, Vec<
     (protected, rejected)
 }
 
+pub(crate) fn has_rejected_candidate(path: &PathF64, params: FitParams, closed: bool) -> bool {
+    let path = canonical(path.clone(), closed);
+    if path.len() < if closed { 4 } else { 3 } {
+        return false;
+    }
+    classify(&path, params, closed).1.into_iter().any(|rejected| rejected)
+}
+
 pub(crate) fn fit_supported(path: PathF64, params: FitParams, closed: bool) -> FittedGeom {
     let mut path = canonical(path, closed);
     if path.len() < if closed { 4 } else { 3 } {
@@ -301,6 +309,32 @@ mod tests {
         }
         let v = PathF64::from_points(vec![p(-30.0, 30.0), p(0.0, 0.0), p(30.0, 30.0)]);
         assert_eq!(classify(&v, params(), false).0, vec![true; 3]);
+    }
+
+    #[test]
+    fn subthreshold_concave_vertex_is_not_a_rejection_candidate() {
+        let path = PathF64::from_points(vec![
+            p(4.0, 4.0),
+            p(60.0, 4.0),
+            p(60.0, 55.0),
+            p(50.0, 55.0),
+            p(29.0, 43.0),
+            p(5.0, 55.0),
+            p(4.0, 55.0),
+            p(4.0, 4.0),
+        ]);
+        let vertex = 4;
+        assert!(
+            (turn(path.path[vertex - 1], path.path[vertex], path.path[vertex + 1])
+                .to_degrees()
+                .abs()
+                - 56.31)
+                .abs()
+                < 0.1
+        );
+        let (_, rejected) = classify(&path, params(), true);
+        assert!(!rejected[vertex], "sub-threshold turn is not a local candidate");
+        assert!(!has_rejected_candidate(&path, params(), true));
     }
 
     #[test]

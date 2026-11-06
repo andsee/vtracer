@@ -134,11 +134,29 @@ fn trace_region(mask: &RegionMask, mode: PathSimplifyMode, params: FitParams) ->
             y: mask.offset.y + sub.rect.top,
         };
         if matches!(mode, PathSimplifyMode::Spline) && params.corner_support > 0.0 {
-            for mut path in BinaryCluster::image_to_paths(
+            let mut paths = BinaryCluster::image_to_paths(
                 &sub.to_binary_image(),
                 PathSimplifyMode::Polygon,
-            ) {
+            );
+            for path in &mut paths {
                 path.offset(&offset);
+            }
+            if !paths.iter().any(|path| {
+                crate::corner::has_rejected_candidate(&path.to_path_f64(), params, true)
+            }) {
+                let compound = BinaryCluster::image_to_compound_path(
+                    &offset,
+                    &sub.to_binary_image(),
+                    mode,
+                    params.corner_threshold,
+                    params.length_threshold,
+                    params.max_iterations,
+                    params.splice_threshold,
+                );
+                append_compound(&mut geoms, &compound);
+                continue;
+            }
+            for path in paths {
                 geoms.push(crate::corner::fit_supported(
                     path.to_path_f64(),
                     params,
