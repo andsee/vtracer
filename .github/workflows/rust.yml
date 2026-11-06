@@ -72,19 +72,20 @@ jobs:
       - name: Exercise binding in Chrome
         working-directory: nodejs
         run: |
-          python3 -m http.server 8765 > /tmp/vtracer-http.log 2>&1 &
+          python3 -m http.server 8765 --directory .. > /tmp/vtracer-http.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           for attempt in $(seq 1 30); do
-            if curl --silent --fail http://127.0.0.1:8765/browser-test.html >/dev/null; then
+            if curl --silent --fail http://127.0.0.1:8765/nodejs/browser-test.html >/dev/null; then
               break
             fi
             sleep 1
           done
           google-chrome --headless --no-sandbox --disable-gpu --virtual-time-budget=10000 --dump-dom \
-            http://127.0.0.1:8765/browser-test.html > /tmp/vtracer-browser-result.html
+            http://127.0.0.1:8765/nodejs/browser-test.html > /tmp/vtracer-browser-result.html
           grep -q '<pre id="result">BROWSER_BINDING_OK ' /tmp/vtracer-browser-result.html
-          printf 'BROWSER_BINDING_OK\\n' > pkg-web/browser-test-result.txt
+          printf 'BROWSER_BINDING_OK\n' > pkg-web/browser-test-result.txt
+          printf '%s\n' "$GITHUB_SHA" > pkg-web/candidate-sha.txt
       - name: Upload browser package and test result
         uses: actions/upload-artifact@v5
         with:

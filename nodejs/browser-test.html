@@ -8,25 +8,42 @@
   const result = document.querySelector('#result');
   try {
     await init();
-    const width = 24;
-    const height = 24;
+    const response = await fetch('../crates/vtracer/tests/fixtures/snowman-bow.pbm');
+    if (!response.ok) throw new Error('failed to fetch raster fixture');
+    const tokens = (await response.text())
+      .replace(/#[^\n]*/g, '')
+      .trim()
+      .split(/\s+/);
+    if (tokens[0] !== 'P1') throw new Error('expected a portable P1 raster');
+    const width = Number(tokens[1]);
+    const height = Number(tokens[2]);
     const pixels = new Uint8Array(width * height * 4);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const i = (y * width + x) * 4;
-        const inside = x >= 4 && x < 20 && y >= 4 && y < 20;
-        pixels.set(inside ? [0, 0, 0, 255] : [255, 255, 255, 255], i);
-      }
+    for (let i = 0; i < width * height; i++) {
+      const value = tokens[i + 3] === '1' ? 0 : 255;
+      pixels.set([value, value, value, 255], i * 4);
     }
-    const svg = vectorize_rgba(pixels, width, height, {
+    const options = {
       clustering: 'bw',
       filterSpeckle: 0,
+      optimize: 0,
+    };
+    const legacy = vectorize_rgba(pixels, width, height, {
+      ...options,
+      cornerSupport: 0,
+    });
+    const supported = vectorize_rgba(pixels, width, height, {
+      ...options,
       cornerSupport: 4,
     });
-    if (!svg.includes('<svg') || !svg.includes('<path')) {
+    if (!legacy.includes('<path') || !supported.includes('<path')) {
       throw new Error('browser binding returned invalid SVG');
     }
-    result.textContent = `BROWSER_BINDING_OK ${svg.length} bytes`;
+    const legacyCubics = (legacy.match(/C/g) || []).length;
+    const supportedCubics = (supported.match(/C/g) || []).length;
+    if (legacy === supported || legacyCubics <= supportedCubics) {
+      throw new Error('positive corner support did not alter fitted geometry');
+    }
+    result.textContent = `BROWSER_BINDING_OK ${legacy.length}->${supported.length} bytes`;
   } catch (error) {
     result.textContent = `BROWSER_BINDING_FAILED ${error}`;
     throw error;
