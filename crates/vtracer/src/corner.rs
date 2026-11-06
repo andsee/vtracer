@@ -156,23 +156,37 @@ pub(crate) fn has_rejected_candidate(path: &PathF64, params: FitParams, closed: 
     classify(&path, params, closed).1.into_iter().any(|rejected| rejected)
 }
 
-pub(crate) fn fit_supported(path: PathF64, params: FitParams, closed: bool) -> FittedGeom {
-    let mut path = canonical(path, closed);
-    if path.len() < if closed { 4 } else { 3 } {
-        return FittedGeom::Polyline(path.path);
+fn fitting_corner_flags(
+    path: &PathF64,
+    params: FitParams,
+    closed: bool,
+) -> (Vec<bool>, Vec<PointF64>, HashSet<PointKey>) {
+    let classification_path = canonical(path.clone(), closed);
+    let (_, rejected) = classify(&classification_path, params, closed);
+    let rejected = point_set(
+        rejected
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &drop)| drop.then_some(classification_path.path[i])),
+    );
+    let mut corners = SubdivideSmooth::find_corners(path, params.corner_threshold, closed);
+    for (i, corner) in corners.iter_mut().enumerate() {
+        *corner &= !rejected.contains(&PointKey::from(path.path[i]));
     }
-    let (mut protected, rejected) = classify(&path, params, closed);
-    let corners: Vec<PointF64> = protected
+    let source_corners = corners
         .iter()
         .enumerate()
         .filter_map(|(i, &keep)| keep.then_some(path.path[i]))
         .collect();
-    let rejected = point_set(
-        rejected
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &drop)| drop.then_some(path.path[i])),
-    );
+    (corners, source_corners, rejected)
+}
+
+pub(crate) fn fit_supported(mut path: PathF64, params: FitParams, closed: bool) -> FittedGeom {
+    let classification_path = canonical(path.clone(), closed);
+    if classification_path.len() < if closed { 4 } else { 3 } {
+        return FittedGeom::Polyline(path.path);
+    }
+    let (mut protected, corners, rejected) = fitting_corner_flags(&path, params, closed);
     for _ in 0..params.max_iterations {
         let (next, flags, done) = SubdivideSmooth::subdivide_keep_corners(
             &path,
@@ -335,6 +349,33 @@ mod tests {
         let (_, rejected) = classify(&path, params(), true);
         assert!(!rejected[vertex], "sub-threshold turn is not a local candidate");
         assert!(!has_rejected_candidate(&path, params(), true));
+    }
+
+    #[test]
+    fn fitting_changes_only_the_corner_flags_of_rejected_candidates() {
+        let path = PathF64::from_points(vec![
+            p(4.0, 4.0),
+            p(20.0, 4.0),
+            p(20.0, 5.0),
+            p(21.0, 4.0),
+            p(60.0, 4.0),
+            p(60.0, 55.0),
+            p(50.0, 55.0),
+            p(29.0, 43.0),
+            p(5.0, 55.0),
+            p(4.0, 55.0),
+            p(4.0, 4.0),
+        ]);
+        let junction = 7;
+        let baseline = SubdivideSmooth::find_corners(&path, params().corner_threshold, true);
+        let (supported, _, rejected) = fitting_corner_flags(&path, params(), true);
+        assert!(has_rejected_candidate(&path, params(), true));
+        assert_eq!(supported[junction], baseline[junction]);
+        for i in 0..baseline.len() {
+            if baseline[i] != supported[i] {
+                assert!(rejected.contains(&PointKey::from(path.path[i])));
+            }
+        }
     }
 
     #[test]
