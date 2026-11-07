@@ -81,6 +81,7 @@
 pub mod colorfit;
 pub mod compose;
 pub mod config;
+mod corner;
 pub mod error;
 pub mod fitter;
 pub mod frontend;

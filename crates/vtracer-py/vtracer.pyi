@@ -28,6 +28,7 @@ class Config:
         adaptive_window: int = 0,              # bw adaptive: window px (0 = auto)
         adaptive_t: float = 15.0,              # bw adaptive: % below local mean
         watershed_detail: int = 128,           # watershed: cut level (higher = more regions, uncapped)
+        corner_support: float = 0.0,           # spline corner support in input pixels (0 = legacy)
     ) -> None: ...
 
     @staticmethod
@@ -44,6 +45,7 @@ class Config:
     color_precision: int
     layer_difference: int
     corner_threshold: int
+    corner_support: float
     length_threshold: float
     max_iterations: int
     splice_threshold: int

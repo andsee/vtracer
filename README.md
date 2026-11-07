@@ -101,6 +101,7 @@ Options:
   -f, --filter-speckle <FILTER_SPECKLE>      Discard patches smaller than X px in size (0..=128)
   -p, --color-precision <COLOR_PRECISION>    Significant bits per RGB channel (1..=8)
   -g, --gradient-step <GRADIENT_STEP>        Color difference between gradient layers (0..=255)
+      --corner-support <PIXELS>             Spline-only source-contour corner support (0 = legacy)
       --simplify <TOLERANCE>                 Simplify curves: fewest cubics within this tolerance in px (try 1–2.5)
       --path-precision <PATH_PRECISION>      Decimal places to use in path coordinates
       --palette <PALETTE>                    Fixed palette: comma-separated hex colors, e.g. '#112233,#445566'
@@ -121,6 +122,11 @@ The spline fine-tuning flags `--corner-threshold <0..=180>`,
 accepted but hidden from `--help`: their defaults (60 / 4 / 45) serve
 virtually every conversion, and `--simplify` is the knob that actually moves
 output size and smoothness.
+
+`--corner-support <pixels>` (Python: `corner_support`; JavaScript: `cornerSupport`)
+sets the minimum support distance on either side of a spline corner, measured
+along the source contour. The default `0` preserves the legacy angle-only
+behavior. Pixel and polygon modes are unaffected.
 
 ### New in 1.0
 

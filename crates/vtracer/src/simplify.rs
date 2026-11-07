@@ -12,6 +12,7 @@
 
 use flo_curves::bezier::{fit_curve_cubic, Curve};
 use flo_curves::Coord2;
+use std::collections::HashSet;
 use visioncortex::PointF64;
 
 use crate::fitter::FittedGeom;
@@ -24,6 +25,11 @@ pub trait CurvePass {
     fn open(&self, geom: FittedGeom) -> FittedGeom;
     /// Transform a closed ring.
     fn ring(&self, geom: FittedGeom) -> FittedGeom;
+    /// Transform a set of rings. Passes that do not need cross-ring context use
+    /// the independent ring operation.
+    fn rings(&self, geoms: Vec<FittedGeom>) -> Vec<FittedGeom> {
+        geoms.into_iter().map(|geom| self.ring(geom)).collect()
+    }
 }
 
 /// paper.js-style curve simplification (Schneider's fit): re-fit each smooth
@@ -55,6 +61,12 @@ impl CurvePass for SimplifyCurves {
     fn open(&self, geom: FittedGeom) -> FittedGeom {
         match geom {
             FittedGeom::Beziers(chain) => FittedGeom::Beziers(self.simplify_chain(chain, false)),
+            FittedGeom::SupportedBeziers { chain, corners } => {
+                FittedGeom::SupportedBeziers {
+                    chain: self.simplify_supported_chain(chain, false, &corners),
+                    corners,
+                }
+            }
             other => other,
         }
     }
@@ -62,12 +74,87 @@ impl CurvePass for SimplifyCurves {
     fn ring(&self, geom: FittedGeom) -> FittedGeom {
         match geom {
             FittedGeom::Beziers(chain) => FittedGeom::Beziers(self.simplify_chain(chain, true)),
+            FittedGeom::SupportedBeziers { chain, corners } => {
+                FittedGeom::SupportedBeziers {
+                    chain: self.simplify_supported_chain(chain, true, &corners),
+                    corners,
+                }
+            }
             other => other,
         }
+    }
+
+    fn rings(&self, geoms: Vec<FittedGeom>) -> Vec<FittedGeom> {
+        let sensitive = topology_sensitive_rings(&geoms, self.tolerance);
+        geoms
+            .into_iter()
+            .enumerate()
+            .map(|(i, geom)| {
+                if sensitive[i] {
+                    geom
+                } else {
+                    self.ring(geom)
+                }
+            })
+            .collect()
     }
 }
 
 impl SimplifyCurves {
+    fn simplify_supported_chain(
+        &self,
+        mut chain: Vec<[PointF64; 4]>,
+        closed: bool,
+        corners: &[PointF64],
+    ) -> Vec<[PointF64; 4]> {
+        if self.tolerance <= 0.0 || chain.len() < 2 {
+            return chain;
+        }
+        let key = |p: PointF64| {
+            (
+                if p.x == 0.0 { 0.0 } else { p.x }.to_bits(),
+                if p.y == 0.0 { 0.0 } else { p.y }.to_bits(),
+            )
+        };
+        let protected: HashSet<_> = corners.iter().copied().map(key).collect();
+        if closed {
+            let seam = chain
+                .iter()
+                .position(|c| protected.contains(&key(c[0])))
+                .unwrap_or_else(|| {
+                    (0..chain.len())
+                        .min_by(|&a, &b| {
+                            let prev_a = if a == 0 { chain.len() - 1 } else { a - 1 };
+                            let prev_b = if b == 0 { chain.len() - 1 } else { b - 1 };
+                            break_angle(&chain[prev_a], &chain[a])
+                                .total_cmp(&break_angle(&chain[prev_b], &chain[b]))
+                        })
+                        .unwrap_or(0)
+                });
+            chain.rotate_left(seam);
+        }
+        let mut cuts = vec![0];
+        for i in 1..chain.len() {
+            if protected.contains(&key(chain[i][0])) {
+                cuts.push(i);
+            }
+        }
+        cuts.push(chain.len());
+        let mut out = Vec::with_capacity(chain.len());
+        for window in cuts.windows(2) {
+            let run = &chain[window[0]..window[1]];
+            if run.len() < 2 {
+                out.extend_from_slice(run);
+            } else {
+                match refit_run(run, self.tolerance) {
+                    Some(refit) if refit.len() < run.len() => out.extend(refit),
+                    _ => out.extend_from_slice(run),
+                }
+            }
+        }
+        out
+    }
+
     fn simplify_chain(&self, mut chain: Vec<[PointF64; 4]>, closed: bool) -> Vec<[PointF64; 4]> {
         if self.tolerance <= 0.0 || chain.len() < 2 {
             return chain;
@@ -149,6 +236,81 @@ fn refit_run(run: &[[PointF64; 4]], tolerance: f64) -> Option<Vec<[PointF64; 4]>
     out.first_mut()?[0] = run[0][0];
     out.last_mut()?[3] = run[run.len() - 1][3];
     Some(out)
+}
+
+/// Keep high-tolerance refits away from nearby boundaries when size-aware
+/// fitting is active. Each boundary can move by up to the tolerance, so pairs
+/// closer than twice that distance are left at their fitted geometry.
+fn topology_sensitive_rings(geoms: &[FittedGeom], tolerance: f64) -> Vec<bool> {
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy)]
+    struct SampleRef {
+        ring: usize,
+        index: usize,
+        point: PointF64,
+    }
+
+    let mut sensitive = vec![false; geoms.len()];
+    let clearance = 2.0 * tolerance;
+    // Keep the established fine-tolerance path unchanged.
+    if tolerance <= 1.0 || !clearance.is_finite() {
+        return sensitive;
+    }
+    let cell_size = clearance;
+    let mut cells: HashMap<(i64, i64), Vec<SampleRef>> = HashMap::new();
+    for (ring, geom) in geoms.iter().enumerate() {
+        let chain = match geom {
+            FittedGeom::Beziers(chain) | FittedGeom::SupportedBeziers { chain, .. } => chain,
+            FittedGeom::Polyline(_) => continue,
+        };
+        if chain.is_empty() {
+            continue;
+        }
+        let samples = sample_run(chain, 1.0);
+        let count = samples.len();
+        for (index, &point) in samples.iter().enumerate() {
+            let cell = (
+                (point.x / cell_size).floor() as i64,
+                (point.y / cell_size).floor() as i64,
+            );
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    if let Some(neighbors) = cells.get(&(cell.0 + dx, cell.1 + dy)) {
+                        for neighbor in neighbors {
+                            if ring == neighbor.ring {
+                                let distance = index.abs_diff(neighbor.index);
+                                let along_ring = distance.min(count.saturating_sub(distance));
+                                if along_ring as f64 <= clearance {
+                                    continue;
+                                }
+                            }
+                            if dist(point, neighbor.point) < clearance {
+                                let current_supported = matches!(
+                                    geoms[ring],
+                                    FittedGeom::SupportedBeziers { .. }
+                                );
+                                let neighbor_supported = matches!(
+                                    geoms[neighbor.ring],
+                                    FittedGeom::SupportedBeziers { .. }
+                                );
+                                if current_supported || neighbor_supported {
+                                    sensitive[ring] = true;
+                                    sensitive[neighbor.ring] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cells.entry(cell).or_default().push(SampleRef {
+                ring,
+                index,
+                point,
+            });
+        }
+    }
+    sensitive
 }
 
 fn dist(a: PointF64, b: PointF64) -> f64 {
@@ -378,6 +540,25 @@ mod tests {
         match pass().ring(FittedGeom::Polyline(poly.clone())) {
             FittedGeom::Polyline(p) => assert_eq!(p, poly),
             _ => panic!("polyline must stay a polyline"),
+        }
+    }
+
+    #[test]
+    fn dense_retained_corner_membership_stays_indexed() {
+        let chain = straight_chain(pt(0.0, 0.0), pt(8192.0, 0.0), 8192);
+        let corners = anchors(&chain);
+        match pass().open(FittedGeom::SupportedBeziers {
+            chain: chain.clone(),
+            corners: corners.clone(),
+        }) {
+            FittedGeom::SupportedBeziers {
+                chain: result,
+                corners: kept,
+            } => {
+                assert_eq!(result, chain);
+                assert_eq!(kept, corners);
+            }
+            _ => panic!("supported geometry must retain its metadata"),
         }
     }
 }

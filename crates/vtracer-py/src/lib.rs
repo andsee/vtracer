@@ -28,7 +28,7 @@ use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 
 use ::vtracer::{
-    Color, ColorImage, Clustering, Config as CoreConfig, FitMode, Hierarchical, Preset,
+    Clustering, Color, ColorImage, Config as CoreConfig, FitMode, Hierarchical, Preset,
 };
 
 // --- string <-> enum helpers -------------------------------------------------
@@ -150,6 +150,7 @@ impl PyConfig {
         adaptive_window = 0,
         adaptive_t = 15.0,
         watershed_detail = 128,
+        corner_support = 0.0,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -173,6 +174,7 @@ impl PyConfig {
         adaptive_window: u32,
         adaptive_t: f64,
         watershed_detail: u32,
+        corner_support: f64,
     ) -> PyResult<Self> {
         let palette = match palette {
             Some(list) => list.iter().map(|s| parse_hex(s)).collect::<PyResult<_>>()?,
@@ -200,6 +202,7 @@ impl PyConfig {
                 binary_adaptive_window: adaptive_window,
                 binary_adaptive_t: adaptive_t,
                 watershed_detail,
+                corner_support,
             },
         })
     }
@@ -303,6 +306,15 @@ impl PyConfig {
     #[setter]
     fn set_corner_threshold(&mut self, v: i32) {
         self.inner.corner_threshold = v;
+    }
+
+    #[getter]
+    fn corner_support(&self) -> f64 {
+        self.inner.corner_support
+    }
+    #[setter]
+    fn set_corner_support(&mut self, v: f64) {
+        self.inner.corner_support = v;
     }
 
     #[getter]
@@ -459,8 +471,8 @@ impl PyConfig {
         format!(
             "Config(clustering='{}', hierarchical='{}', mode='{}', filter_speckle={}, \
              color_precision={}, layer_difference={}, corner_threshold={}, length_threshold={}, \
-             max_iterations={}, splice_threshold={}, path_precision={:?}, palette={} colors, \
-             max_colors={:?}, optimize={})",
+             max_iterations={}, splice_threshold={}, corner_support={}, path_precision={:?}, \
+             palette={} colors, max_colors={:?}, optimize={})",
             clustering_str(c.clustering),
             hierarchical_str(c.hierarchical),
             mode_str(c.mode),
@@ -471,6 +483,7 @@ impl PyConfig {
             c.length_threshold,
             c.max_iterations,
             c.splice_threshold,
+            c.corner_support,
             c.path_precision,
             c.palette.len(),
             c.max_colors,

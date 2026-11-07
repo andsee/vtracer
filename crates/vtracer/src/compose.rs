@@ -11,8 +11,8 @@
 //! is transformed exactly once for both of its faces.
 
 use crate::error::Error;
-use crate::fitter::CurveFitter;
-use crate::ir::{MultiPath, RegionMask, Segmentation, Shape, VectorDoc};
+use crate::fitter::{CurveFitter, FittedGeom};
+use crate::ir::{MultiPath, Segmentation, Shape, VectorDoc};
 use crate::mosaic::{compose_mosaic, SegmentFitter};
 use crate::progress::{Ctx, Phase};
 use crate::simplify::CurvePass;
@@ -70,21 +70,55 @@ impl Compositing {
     }
 }
 
-/// Fit one region's outlines and run the curve passes over each contour.
-/// Stacked contours are closed rings, so the ring form of each pass applies.
-fn fit_region(
-    fitter: &dyn CurveFitter,
-    mask: &RegionMask,
+/// Run closed-ring passes with cross-layer context, then assemble each layer.
+fn fit_regions(
+    mut regions: Vec<Vec<FittedGeom>>,
     passes: &[Box<dyn CurvePass>],
-) -> MultiPath {
-    let mut path = MultiPath::new();
-    for mut geom in fitter.fit_region(mask) {
-        for pass in passes {
-            geom = pass.ring(geom);
-        }
-        path.push(geom.into_closed_subpath());
+) -> Vec<MultiPath> {
+    let counts: Vec<usize> = regions.iter().map(Vec::len).collect();
+    let mut geoms: Vec<FittedGeom> = regions.drain(..).flatten().collect();
+    for pass in passes {
+        geoms = pass.rings(geoms);
     }
-    path
+    let mut geoms = geoms.into_iter();
+    counts
+        .into_iter()
+        .map(|count| {
+            let mut path = MultiPath::new();
+            for geom in geoms.by_ref().take(count) {
+                path.push(geom.into_closed_subpath());
+            }
+            path
+        })
+        .collect()
+}
+
+fn fit_stacked_regions(
+    seg: &Segmentation,
+    fitter: &dyn CurveFitter,
+    passes: &[Box<dyn CurvePass>],
+) -> Vec<MultiPath> {
+    let regions = seg
+        .layers
+        .iter()
+        .map(|layer| fitter.fit_region(&layer.mask))
+        .collect();
+    fit_regions(regions, passes)
+}
+
+fn append_stacked(
+    seg: &Segmentation,
+    paths: impl IntoIterator<Item = MultiPath>,
+    doc: &mut VectorDoc,
+) {
+    for (layer, path) in seg.layers.iter().zip(paths) {
+        if !path.is_empty() {
+            doc.shapes.push(Shape {
+                paint: layer.paint,
+                path,
+            });
+        }
+    }
 }
 
 /// Progress-aware [`compose_stacked`]: reports after each layer and checks for
@@ -97,17 +131,14 @@ fn compose_stacked_with(
 ) -> Result<VectorDoc, Error> {
     let mut doc = VectorDoc::new(seg.width, seg.height);
     let total = seg.layers.len().max(1);
+    let mut regions = Vec::with_capacity(seg.layers.len());
     for (i, layer) in seg.layers.iter().enumerate() {
         ctx.check()?;
-        let path = fit_region(fitter, &layer.mask, passes);
-        if !path.is_empty() {
-            doc.shapes.push(Shape {
-                paint: layer.paint,
-                path,
-            });
-        }
+        regions.push(fitter.fit_region(&layer.mask));
         ctx.report(Phase::Compose, (i + 1) as f32 / total as f32);
     }
+    let paths = fit_regions(regions, passes);
+    append_stacked(seg, paths, &mut doc);
     Ok(doc)
 }
 
@@ -118,14 +149,7 @@ pub fn compose_stacked(
     passes: &[Box<dyn CurvePass>],
 ) -> VectorDoc {
     let mut doc = VectorDoc::new(seg.width, seg.height);
-    for layer in &seg.layers {
-        let path = fit_region(fitter, &layer.mask, passes);
-        if !path.is_empty() {
-            doc.shapes.push(Shape {
-                paint: layer.paint,
-                path,
-            });
-        }
-    }
+    let paths = fit_stacked_regions(seg, fitter, passes);
+    append_stacked(seg, paths, &mut doc);
     doc
 }

@@ -472,7 +472,7 @@ mod tests {
                 PointF64 { x: p.x as f64, y: p.y as f64 }
             };
             match fitted.geom {
-                FittedGeom::Beziers(b) => {
+                FittedGeom::Beziers(b) | FittedGeom::SupportedBeziers { chain: b, .. } => {
                     assert_eq!(b.first().unwrap()[0], start, "start pinned to node");
                     assert_eq!(b.last().unwrap()[3], end, "end pinned to node");
                 }
@@ -515,7 +515,7 @@ mod tests {
                 PointF64 { x: p.x as f64, y: p.y as f64 }
             };
             match pass.open(fitter.fit_open(seg).geom) {
-                FittedGeom::Beziers(b) => {
+                FittedGeom::Beziers(b) | FittedGeom::SupportedBeziers { chain: b, .. } => {
                     assert_eq!(b.first().unwrap()[0], start, "start pinned through pass");
                     assert_eq!(b.last().unwrap()[3], end, "end pinned through pass");
                 }
@@ -527,6 +527,72 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 0, "expected some open segments");
+    }
+
+    #[test]
+    fn supported_shared_mosaic_boundary_changes_geometry_and_keeps_junctions() {
+        use super::fit::{FittedGeom, SegmentFitter, SplineSegmentFitter};
+
+        let mut labels = Vec::new();
+        for y in 0..32 {
+            let boundary = if (7..10).contains(&y) { 19 } else { 16 };
+            for x in 0..32 {
+                labels.push(if y < 16 {
+                    if x < boundary { 0 } else { 1 }
+                } else if x < 16 {
+                    2
+                } else {
+                    1
+                });
+            }
+        }
+        let graph = BoundaryGraph::extract(&grid(32, 32, labels));
+        let (segment_id, segment) = graph
+            .segments
+            .iter()
+            .enumerate()
+            .find(|(_, segment)| {
+                !segment.is_ring()
+                    && matches!((segment.left, segment.right), (0, 1) | (1, 0))
+            })
+            .expect("top region boundary is shared and open");
+        let legacy = SplineSegmentFitter::default().fit_open(segment).geom;
+        let supported = SplineSegmentFitter {
+            corner_support: 4.0,
+            ..SplineSegmentFitter::default()
+        }
+        .fit_open(segment)
+        .geom;
+        let legacy_chain = match legacy {
+            FittedGeom::Beziers(chain) => chain,
+            other => panic!("expected legacy cubic geometry, got {other:?}"),
+        };
+        let chain = match supported {
+            FittedGeom::SupportedBeziers { chain, .. } => chain,
+            other => panic!("expected supported cubic geometry, got {other:?}"),
+        };
+        assert_ne!(
+            legacy_chain, chain,
+            "positive support changes shared geometry"
+        );
+        let start = PointF64 {
+            x: segment.points[0].x as f64,
+            y: segment.points[0].y as f64,
+        };
+        let end = PointF64 {
+            x: segment.points.last().unwrap().x as f64,
+            y: segment.points.last().unwrap().y as f64,
+        };
+        assert_eq!(chain.first().unwrap()[0], start);
+        assert_eq!(chain.last().unwrap()[3], end);
+        let refs: Vec<_> = graph
+            .nodes
+            .iter()
+            .flat_map(|node| node.out.iter().flatten())
+            .filter(|reference| reference.seg as usize == segment_id)
+            .collect();
+        assert_eq!(refs.len(), 2, "both segment endpoints reference the same fit");
+        assert_ne!(refs[0].forward, refs[1].forward);
     }
 
     /// Build a label map with explicit per-region gray levels.
