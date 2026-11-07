@@ -27,8 +27,8 @@ fn concave_junction_image() -> ColorImage {
         (5.0, 55.0),
         (4.0, 55.0),
     ];
-    binary_image(64, 64, |x, y| {
-        let (x, y) = (x as f64 + 0.5, y as f64 + 0.5);
+    binary_image(64, 64, |px, py| {
+        let (x, y) = (px as f64 + 0.5, py as f64 + 0.5);
         let mut inside = false;
         for i in 0..polygon.len() {
             let (x0, y0) = polygon[i];
@@ -38,6 +38,52 @@ fn concave_junction_image() -> ColorImage {
             }
         }
         inside
+    })
+}
+
+fn concave_junction_with_wobble() -> ColorImage {
+    let polygon = [
+        (4.0, 4.0),
+        (60.0, 4.0),
+        (60.0, 58.0),
+        (50.0, 58.0),
+        (27.0, 42.0),
+        (5.0, 58.0),
+        (4.0, 58.0),
+    ];
+    binary_image(64, 64, |px, py| {
+        let (x, y) = (px as f64 + 0.5, py as f64 + 0.5);
+        let mut inside = false;
+        for i in 0..polygon.len() {
+            let (x0, y0) = polygon[i];
+            let (x1, y1) = polygon[(i + 1) % polygon.len()];
+            if (y0 > y) != (y1 > y) && x < (x1 - x0) * (y - y0) / (y1 - y0) + x0 {
+                inside = !inside;
+            }
+        }
+        inside || ((19..=20).contains(&px) && (2..=3).contains(&py))
+    })
+}
+
+fn near_touching_blobs() -> ColorImage {
+    binary_image(64, 64, |x, y| {
+        let ellipse = |cx: f64, cy: f64| {
+            ((x as f64 + 0.5 - cx) / 10.5).powi(2)
+                + ((y as f64 + 0.5 - cy) / 24.0).powi(2)
+                < 1.0
+        };
+        ellipse(20.0, 32.0)
+            || ellipse(43.0, 32.0)
+            || ((20..=21).contains(&x) && (7..=8).contains(&y))
+    })
+}
+
+fn narrow_opening() -> ColorImage {
+    binary_image(64, 64, |x, y| {
+        let body = (6..58).contains(&x) && (6..58).contains(&y);
+        let cavity = (16..48).contains(&x) && (14..54).contains(&y);
+        let entrance = (30..33).contains(&x) && (6..14).contains(&y);
+        body && !(cavity || entrance) || ((10..12).contains(&x) && (4..6).contains(&y))
     })
 }
 
@@ -79,6 +125,21 @@ fn rendered_mask(svg: &str, width: u32, height: u32) -> Vec<bool> {
     let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).unwrap();
     let mut pixmap = tiny_skia::Pixmap::new(width, height).unwrap();
     resvg::render(&tree, tiny_skia::Transform::identity(), &mut pixmap.as_mut());
+    pixmap
+        .data()
+        .chunks_exact(4)
+        .map(|rgba| rgba[3] > 128 && rgba[0] < 128)
+        .collect()
+}
+
+fn rendered_mask_scaled(svg: &str, width: u32, height: u32, scale: f32) -> Vec<bool> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).unwrap();
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).unwrap();
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
     pixmap
         .data()
         .chunks_exact(4)
@@ -156,6 +217,14 @@ fn component_count(mask: &[bool], width: usize, foreground: bool, interior_only:
         count += usize::from(!interior_only || !border);
     }
     count
+}
+
+fn source_mask(image: &ColorImage) -> Vec<bool> {
+    image
+        .pixels
+        .chunks_exact(4)
+        .map(|rgba| rgba[0] < 128)
+        .collect()
 }
 
 #[test]
@@ -259,6 +328,130 @@ fn subthreshold_concave_junction_keeps_legacy_spline_geometry() {
             "non-candidate concave transitions must use baseline spline fitting"
         );
     }
+}
+
+#[test]
+fn active_corner_rejection_removes_wobble_without_moving_sustained_junction() {
+    let image = concave_junction_with_wobble();
+    let source = config(Hierarchical::Stacked);
+    for simplify in [Some(0.0), Some(1.0)] {
+        let base = Config { simplify, ..source.clone() };
+        let baseline = base.build().unwrap().to_svg(&image).unwrap();
+        let enabled = Config {
+            corner_support: 4.0,
+            ..base
+        }
+        .build()
+        .unwrap()
+        .to_svg(&image)
+        .unwrap();
+        assert_ne!(baseline, enabled, "support rejection must be active");
+        let baseline = rendered_mask_scaled(&baseline, 512, 512, 8.0);
+        let enabled = rendered_mask_scaled(&enabled, 512, 512, 8.0);
+        for y in 264..408 {
+            for x in 0..512 {
+                assert_eq!(
+                    baseline[y * 512 + x],
+                    enabled[y * 512 + x],
+                    "sustained-junction crop differs at ({x}, {y}), simplify={simplify:?}"
+                );
+            }
+        }
+        let raised_wobble = (2 * 8..4 * 8).any(|y| {
+            (19 * 8..21 * 8).any(|x| baseline[y * 512 + x] && !enabled[y * 512 + x])
+        });
+        assert!(raised_wobble, "the connected raised wobble must be removed");
+    }
+}
+
+#[test]
+fn active_corner_rejection_preserves_a_narrow_gap_between_contours() {
+    let image = near_touching_blobs();
+    assert_eq!(
+        component_count(&source_mask(&image), image.width, true, false),
+        2
+    );
+    let baseline = Config {
+        simplify: Some(3.25),
+        ..config(Hierarchical::Stacked)
+    }
+    .build()
+    .unwrap()
+    .to_svg(&image)
+    .unwrap();
+    let supported = Config {
+        corner_support: 4.0,
+        simplify: Some(3.25),
+        ..config(Hierarchical::Stacked)
+    }
+    .build()
+    .unwrap()
+    .to_svg(&image)
+    .unwrap();
+    let supported_unsimplified = Config {
+        corner_support: 4.0,
+        ..config(Hierarchical::Stacked)
+    }
+    .build()
+    .unwrap()
+    .to_svg(&image)
+    .unwrap();
+    assert_ne!(baseline, supported, "corner rejection must be active");
+    assert_eq!(
+        supported, supported_unsimplified,
+        "nearby contours must bypass a topology-risky simplification"
+    );
+    let rendered = rendered_mask_scaled(&supported, 512, 512, 8.0);
+    assert_eq!(
+        component_count(&rendered, 512, true, false),
+        2,
+        "the two source contours must remain disconnected"
+    );
+}
+
+#[test]
+fn active_corner_rejection_preserves_a_narrow_opening_on_one_contour() {
+    let image = narrow_opening();
+    assert_eq!(
+        component_count(&source_mask(&image), image.width, false, true),
+        0
+    );
+    let baseline = Config {
+        simplify: Some(3.25),
+        ..config(Hierarchical::Stacked)
+    }
+    .build()
+    .unwrap()
+    .to_svg(&image)
+    .unwrap();
+    let supported = Config {
+        corner_support: 4.0,
+        simplify: Some(3.25),
+        ..config(Hierarchical::Stacked)
+    }
+    .build()
+    .unwrap()
+    .to_svg(&image)
+    .unwrap();
+    let supported_unsimplified = Config {
+        corner_support: 4.0,
+        ..config(Hierarchical::Stacked)
+    }
+    .build()
+    .unwrap()
+    .to_svg(&image)
+    .unwrap();
+    assert_ne!(baseline, supported, "corner rejection must be active");
+    assert_eq!(
+        supported, supported_unsimplified,
+        "a narrow self-gap must bypass topology-risky simplification"
+    );
+    let rendered = rendered_mask_scaled(&supported, 512, 512, 8.0);
+    assert_eq!(
+        component_count(&rendered, 512, false, true),
+        0,
+        "the narrow opening must not close into a hole"
+    );
 }
 
 #[test]

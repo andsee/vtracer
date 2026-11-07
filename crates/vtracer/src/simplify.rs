@@ -25,6 +25,11 @@ pub trait CurvePass {
     fn open(&self, geom: FittedGeom) -> FittedGeom;
     /// Transform a closed ring.
     fn ring(&self, geom: FittedGeom) -> FittedGeom;
+    /// Transform a set of rings. Passes that do not need cross-ring context use
+    /// the independent ring operation.
+    fn rings(&self, geoms: Vec<FittedGeom>) -> Vec<FittedGeom> {
+        geoms.into_iter().map(|geom| self.ring(geom)).collect()
+    }
 }
 
 /// paper.js-style curve simplification (Schneider's fit): re-fit each smooth
@@ -77,6 +82,21 @@ impl CurvePass for SimplifyCurves {
             }
             other => other,
         }
+    }
+
+    fn rings(&self, geoms: Vec<FittedGeom>) -> Vec<FittedGeom> {
+        let sensitive = topology_sensitive_rings(&geoms, self.tolerance);
+        geoms
+            .into_iter()
+            .enumerate()
+            .map(|(i, geom)| {
+                if sensitive[i] {
+                    geom
+                } else {
+                    self.ring(geom)
+                }
+            })
+            .collect()
     }
 }
 
@@ -216,6 +236,81 @@ fn refit_run(run: &[[PointF64; 4]], tolerance: f64) -> Option<Vec<[PointF64; 4]>
     out.first_mut()?[0] = run[0][0];
     out.last_mut()?[3] = run[run.len() - 1][3];
     Some(out)
+}
+
+/// Keep high-tolerance refits away from nearby boundaries when size-aware
+/// fitting is active. Each boundary can move by up to the tolerance, so pairs
+/// closer than twice that distance are left at their fitted geometry.
+fn topology_sensitive_rings(geoms: &[FittedGeom], tolerance: f64) -> Vec<bool> {
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy)]
+    struct SampleRef {
+        ring: usize,
+        index: usize,
+        point: PointF64,
+    }
+
+    let mut sensitive = vec![false; geoms.len()];
+    let clearance = 2.0 * tolerance;
+    // Keep the established fine-tolerance path unchanged.
+    if tolerance <= 1.0 || !clearance.is_finite() {
+        return sensitive;
+    }
+    let cell_size = clearance;
+    let mut cells: HashMap<(i64, i64), Vec<SampleRef>> = HashMap::new();
+    for (ring, geom) in geoms.iter().enumerate() {
+        let chain = match geom {
+            FittedGeom::Beziers(chain) | FittedGeom::SupportedBeziers { chain, .. } => chain,
+            FittedGeom::Polyline(_) => continue,
+        };
+        if chain.is_empty() {
+            continue;
+        }
+        let samples = sample_run(chain, 1.0);
+        let count = samples.len();
+        for (index, &point) in samples.iter().enumerate() {
+            let cell = (
+                (point.x / cell_size).floor() as i64,
+                (point.y / cell_size).floor() as i64,
+            );
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    if let Some(neighbors) = cells.get(&(cell.0 + dx, cell.1 + dy)) {
+                        for neighbor in neighbors {
+                            if ring == neighbor.ring {
+                                let distance = index.abs_diff(neighbor.index);
+                                let along_ring = distance.min(count.saturating_sub(distance));
+                                if along_ring as f64 <= clearance {
+                                    continue;
+                                }
+                            }
+                            if dist(point, neighbor.point) < clearance {
+                                let current_supported = matches!(
+                                    geoms[ring],
+                                    FittedGeom::SupportedBeziers { .. }
+                                );
+                                let neighbor_supported = matches!(
+                                    geoms[neighbor.ring],
+                                    FittedGeom::SupportedBeziers { .. }
+                                );
+                                if current_supported || neighbor_supported {
+                                    sensitive[ring] = true;
+                                    sensitive[neighbor.ring] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cells.entry(cell).or_default().push(SampleRef {
+                ring,
+                index,
+                point,
+            });
+        }
+    }
+    sensitive
 }
 
 fn dist(a: PointF64, b: PointF64) -> f64 {
