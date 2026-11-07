@@ -1,6 +1,20 @@
 use resvg::{tiny_skia, usvg};
 use vtracer::ir::PathCmd;
+use vtracer::fitter::FittedGeom;
+use vtracer::simplify::{CurvePass, SimplifyCurves};
 use vtracer::{Clustering, ColorImage, Config, FitMode, Hierarchical, VectorDoc};
+
+struct IndependentRingSimplify(SimplifyCurves);
+
+impl CurvePass for IndependentRingSimplify {
+    fn open(&self, geom: FittedGeom) -> FittedGeom {
+        self.0.open(geom)
+    }
+
+    fn ring(&self, geom: FittedGeom) -> FittedGeom {
+        self.0.ring(geom)
+    }
+}
 
 fn binary_image(width: usize, height: usize, black: impl Fn(usize, usize) -> bool) -> ColorImage {
     let mut pixels = Vec::with_capacity(width * height * 4);
@@ -73,17 +87,18 @@ fn near_touching_blobs() -> ColorImage {
                 < 1.0
         };
         ellipse(20.0, 32.0)
-            || ellipse(43.0, 32.0)
+            || ellipse(41.0, 32.0)
             || ((20..=21).contains(&x) && (7..=8).contains(&y))
     })
 }
 
 fn narrow_opening() -> ColorImage {
     binary_image(64, 64, |x, y| {
-        let body = (6..58).contains(&x) && (6..58).contains(&y);
-        let cavity = (16..48).contains(&x) && (14..54).contains(&y);
-        let entrance = (30..33).contains(&x) && (6..14).contains(&y);
-        body && !(cavity || entrance) || ((10..12).contains(&x) && (4..6).contains(&y))
+        let (dx, dy) = (x as f64 + 0.5 - 32.0, y as f64 + 0.5 - 32.0);
+        let outer = dx * dx + dy * dy < 26.0 * 26.0;
+        let inner = dx * dx + dy * dy < 17.0 * 17.0;
+        let slit = dx.abs() < 1.5 && dy < 0.0;
+        (outer && !inner && !slit) || ((58..60).contains(&x) && (31..33).contains(&y))
     })
 }
 
@@ -225,6 +240,20 @@ fn source_mask(image: &ColorImage) -> Vec<bool> {
         .chunks_exact(4)
         .map(|rgba| rgba[0] < 128)
         .collect()
+}
+
+fn independently_simplified_svg(image: &ColorImage) -> String {
+    let mut pipeline = Config {
+        corner_support: 4.0,
+        ..config(Hierarchical::Stacked)
+    }
+    .build()
+    .unwrap();
+    pipeline.curve_passes = vec![Box::new(IndependentRingSimplify(SimplifyCurves {
+        tolerance: 3.25,
+        corner_threshold: std::f64::consts::PI / 3.0,
+    }))];
+    pipeline.to_svg(image).unwrap()
 }
 
 #[test]
@@ -406,6 +435,17 @@ fn active_corner_rejection_preserves_a_narrow_gap_between_contours() {
         component_count(&rendered, 512, true, false),
         2,
         "the two source contours must remain disconnected"
+    );
+    let independently_simplified = rendered_mask_scaled(
+        &independently_simplified_svg(&image),
+        512,
+        512,
+        8.0,
+    );
+    assert_eq!(
+        component_count(&independently_simplified, 512, true, false),
+        1,
+        "independent high-tolerance refits close the source gap"
     );
 }
 
